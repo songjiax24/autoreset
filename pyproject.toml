@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seed-preview-cv"
+version = "0.1.0"
+description = "Minecraft speedrun seed screening from World Preview screenshots"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.7.0",
+    "numpy>=1.24.0",
+    "opencv-python-headless>=4.13.0.92",
+    "pandas>=2.0.0",
+    "PyYAML>=6.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+train = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "pillow>=9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+]
+train = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "pillow>=9.0",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/seed_preview_cv"]
+
+[project.scripts]
+seed-scan-distances = "seed_preview_cv.seed_selection.scan_distances:main"
+seed-summarize-distances = "seed_preview_cv.seed_selection.summarize_distances:main"
+seed-plot-distances = "seed_preview_cv.seed_selection.plot_distances_cli:main"
+seed-apply-acceptance = "seed_preview_cv.seed_selection.apply_acceptance:main"
+seed-build-txt = "seed_preview_cv.seed_selection.build_seed_txt:main"
+seed-compare-spawns = "seed_preview_cv.collection.compare_spawns:main"
+seed-mask-screenshots = "seed_preview_cv.collection.mask_screenshots_cli:main"
+seed-prepare-dataset-images = "seed_preview_cv.collection.prepare_dataset_images:main"
+seed-integrate-collection = "seed_preview_cv.collection.integrate_datasets:main"
+seed-sample-pilot = "seed_preview_cv.collection.sample_pilot:main"
+seed-compute-labels = "seed_preview_cv.labeling.compute_labels:main"
+seed-summarize-labels = "seed_preview_cv.labeling.summarize_labels:main"
+seed-annotate-labels = "seed_preview_cv.labeling.annotate_labels:main"
+seed-annotate-compare = "seed_preview_cv.labeling.annotate_compare:main"
+seed-plot-pilot-scores = "seed_preview_cv.labeling.plot_pilot_scores:main"
+seed-random-label-benchmark = "seed_preview_cv.labeling.random_label_benchmark:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

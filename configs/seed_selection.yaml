@@ -1,0 +1,26 @@
+# 环节 1：筛选进入数据集的种子
+
+minecraft_version: "1.16.1"
+
+sampling:
+  num_seeds: 100000
+  seed: 42
+
+treasure:
+  search_radius_blocks: 512
+
+acceptance:
+  p_min: 0.05
+  p_max: 1.0
+  d0: 96.0
+  scale: 32.0
+  rng_seed: 42
+
+output:
+  distances: outputs/seed_selection/distances.csv
+  distance_summary: outputs/seed_selection/distance_summary.json
+  distance_histogram: outputs/seed_selection/distance_histogram.png
+  seed_list: outputs/seed_selection/seed_list.csv
+  seeds_txt: seeds.txt
+  acceptance_summary: outputs/seed_selection/acceptance_summary.json
+  acceptance_histogram: outputs/seed_selection/acceptance_histogram.png

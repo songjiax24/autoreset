@@ -1,0 +1,65 @@
+# Training configuration (Stage 1.5: splits generated via make_splits.py)
+# Default label mode for splits: directional (see data/label_mode)
+
+label_mode: directional
+
+data:
+  train_csv: data/labels/splits/train_balanced.csv
+  val_csv: data/labels/splits/val_balanced.csv
+  test_balanced_csv: data/labels/splits/test_balanced.csv
+  test_natural_csv: data/labels/splits/test_natural.csv
+  image_root: .
+  image_path_column: image_path
+  seed_column: seed
+  target_columns:
+    forest: s_forest
+    ocean: s_ocean
+    beach: s_beach
+
+image:
+  width: 512
+  height: 320
+  normalize: imagenet
+  augmentation:
+    enabled: false
+
+model:
+  name: scratch_resnet_cnn
+  input_channels: 3
+  output_dim: 3
+  dropout: 0.1
+  activation: silu
+
+loss:
+  name: smooth_l1
+  beta: 0.05
+  weights:
+    forest: 1.0
+    ocean: 1.0
+    beach: 1.0
+
+training:
+  epochs: 80
+  batch_size: 32
+  num_workers: 4
+  optimizer: adamw
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  mixed_precision: true
+  seed: 42
+  save_best: true
+  save_last: true
+
+output:
+  run_dir: outputs/models/scratch_cnn_v1
+
+evaluation:
+  eps: 1.0e-6
+  total_loss_weights:
+    forest: 0.4
+    ocean: 0.4
+    beach: 0.2
+  accept_rates: [0.05, 0.10, 0.15, 0.20]
+  true_good_rate: 0.10
+  use_s_total_if_available: true
+  evaluate_test_after_training: true

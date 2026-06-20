@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+*.o
+.venv/
+venv/
+.env
+
+# uv.lock is committed for reproducible installs
+
+# Test / tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# =============================================================================
+# Data — do not commit (regenerate or copy separately on each machine)
+# =============================================================================
+
+# Main data tree (~35GB): screenshots, dataset_images, labels, interim, etc.
+data/
+
+# Legacy / batch image folders at repo root
+dataset_*/
+dataset_test_random/
+
+# Generated seed lists for collection (~28k seeds)
+seeds.txt
+seeds.meta.json
+
+# Legacy capture script (superseded by seed_preview_cv.collection)
+capture.py
+
+# =============================================================================
+# Pipeline outputs (models, predictions, plots, collection debug)
+# =============================================================================
+outputs/
+
+# =============================================================================
+# External / build artifacts
+# =============================================================================
+
+# cubiomes source (clone via scripts/setup_cubiomes.sh)
+third_party/cubiomes/*
+!third_party/cubiomes/README.md
+
+third_party/cubiomes/*.o
+third_party/cubiomes/*.a
+
+# cubiomes Python wrapper shared library
+src/seed_preview_cv/cubiomes_bindings/*.so
