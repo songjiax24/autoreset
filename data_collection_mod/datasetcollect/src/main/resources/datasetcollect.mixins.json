@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "me.cv.datasetcollect.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "client": [
+    "MixinWorldPreview",
+    "MixinLevelLoadingScreen",
+    "MixinMinecraftClient"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "datasetcollect",
+  "version": "${version}",
+  "name": "Dataset Collector",
+  "description": "Automated speedrun AI dataset capture for Atum + World Preview",
+  "authors": ["CV Project"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "me.cv.datasetcollect.DatasetCollectMod"
+    ]
+  },
+  "mixins": [
+    "datasetcollect.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.14.0",
+    "minecraft": "1.16.1",
+    "fabric": "*",
+    "atum": "*",
+    "worldpreview": "*",
+    "speedrunapi": "*"
+  }
+}
