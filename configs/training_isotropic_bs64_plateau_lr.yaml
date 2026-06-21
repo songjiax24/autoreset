@@ -1,13 +1,13 @@
-# Training configuration (Stage 1.5: splits generated via make_splits.py)
-# Default label mode for splits: directional (see data/label_mode)
+# Isotropic label training (bs64 + plateau LR + early stopping)
+# Splits: data/labels/splits_isotropic/
 
 label_mode: directional
 
 data:
-  train_csv: data/labels/splits/train_balanced.csv
-  val_csv: data/labels/splits/val_balanced.csv
-  test_balanced_csv: data/labels/splits/test_balanced.csv
-  test_natural_csv: data/labels/splits/test_natural.csv
+  train_csv: data/labels/splits_isotropic/train_balanced.csv
+  val_csv: data/labels/splits_isotropic/val_balanced.csv
+  test_balanced_csv: data/labels/splits_isotropic/test_balanced.csv
+  test_natural_csv: data/labels/splits_isotropic/test_natural.csv
   image_root: .
   image_path_column: image_path
   seed_column: seed
@@ -66,7 +66,7 @@ training:
     threshold_mode: abs
 
 output:
-  run_dir: outputs/models/scratch_cnn_v1
+  run_dir: /root/autodl-tmp/outputs/models/scratch_cnn_v1_isotropic_bs64_plateau_lr
 
 evaluation:
   eps: 1.0e-6

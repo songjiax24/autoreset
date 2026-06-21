@@ -39,7 +39,7 @@ loss:
     beach: 1.0
 
 training:
-  epochs: 80
+  epochs: 5
   batch_size: 32
   num_workers: 4
   optimizer: adamw
@@ -51,19 +51,9 @@ training:
   save_last: true
   early_stopping:
     enabled: true
-    patience: 15
-    min_delta: 0.0001
+    patience: 1
+    min_delta: 999.0
     metric: val_loss
-  scheduler:
-    enabled: true
-    name: reduce_on_plateau
-    monitor: val_loss
-    mode: min
-    factor: 0.5
-    patience: 5
-    min_lr: 1.0e-5
-    threshold: 0.0001
-    threshold_mode: abs
 
 output:
   run_dir: outputs/models/scratch_cnn_v1

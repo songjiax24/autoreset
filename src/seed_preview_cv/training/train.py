@@ -360,6 +360,90 @@ def build_optimizer_from_config(
     )
 
 
+def scheduler_config_from_training(config: dict[str, Any]) -> dict[str, Any]:
+    train_cfg = _training_cfg(config)
+    sched_cfg = train_cfg.get("scheduler", {})
+    enabled = bool(sched_cfg.get("enabled", False))
+    name = str(sched_cfg.get("name", "reduce_on_plateau"))
+    monitor = str(sched_cfg.get("monitor", "val_loss"))
+    mode = str(sched_cfg.get("mode", "min"))
+    if enabled and name != "reduce_on_plateau":
+        raise ValueError(
+            f"Unsupported scheduler.name: {name!r}. Only 'reduce_on_plateau' is supported."
+        )
+    if enabled and monitor != "val_loss":
+        raise ValueError(
+            f"Unsupported scheduler.monitor: {monitor!r}. Only 'val_loss' is supported."
+        )
+    if enabled and mode != "min":
+        raise ValueError(
+            f"Unsupported scheduler.mode: {mode!r}. Only 'min' is supported."
+        )
+    return {
+        "enabled": enabled,
+        "name": name,
+        "monitor": monitor,
+        "mode": mode,
+        "factor": float(sched_cfg.get("factor", 0.5)),
+        "patience": int(sched_cfg.get("patience", 5)),
+        "min_lr": float(sched_cfg.get("min_lr", 1e-5)),
+        "threshold": float(sched_cfg.get("threshold", 0.0001)),
+        "threshold_mode": str(sched_cfg.get("threshold_mode", "abs")),
+    }
+
+
+def build_scheduler_from_config(
+    optimizer: torch.optim.Optimizer,
+    config: dict[str, Any],
+) -> torch.optim.lr_scheduler.ReduceLROnPlateau | None:
+    sched_cfg = scheduler_config_from_training(config)
+    if not sched_cfg["enabled"]:
+        return None
+    return torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode=sched_cfg["mode"],
+        factor=sched_cfg["factor"],
+        patience=sched_cfg["patience"],
+        min_lr=sched_cfg["min_lr"],
+        threshold=sched_cfg["threshold"],
+        threshold_mode=sched_cfg["threshold_mode"],
+    )
+
+
+def current_learning_rates(optimizer: torch.optim.Optimizer) -> list[float]:
+    return [float(group["lr"]) for group in optimizer.param_groups]
+
+
+def restore_scheduler_state(
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau | None,
+    payload: dict[str, Any],
+    *,
+    enabled: bool,
+    resume_path: Path,
+) -> None:
+    if not enabled or scheduler is None:
+        return
+    sched_state = payload.get("scheduler_state_dict")
+    if sched_state is None:
+        warnings.warn(
+            f"Resume checkpoint missing scheduler_state_dict: {resume_path}",
+            stacklevel=2,
+        )
+        return
+    scheduler.load_state_dict(sched_state)
+
+
+def step_scheduler(
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau,
+    optimizer: torch.optim.Optimizer,
+    val_loss: float,
+) -> tuple[list[float], list[float], bool]:
+    lr_before = current_learning_rates(optimizer)
+    scheduler.step(val_loss)
+    lr_after = current_learning_rates(optimizer)
+    return lr_before, lr_after, lr_after != lr_before
+
+
 def _new_loss_accumulator() -> dict[str, float]:
     return {key: 0.0 for key in LOSS_KEYS} | {"count": 0.0}
 
@@ -511,6 +595,59 @@ def validate_one_epoch(
     }
 
 
+def early_stopping_config_from_training(config: dict[str, Any]) -> dict[str, Any]:
+    train_cfg = _training_cfg(config)
+    es_cfg = train_cfg.get("early_stopping", {})
+    enabled = bool(es_cfg.get("enabled", False))
+    metric = str(es_cfg.get("metric", "val_loss"))
+    if metric != "val_loss":
+        raise ValueError(
+            f"Unsupported early_stopping.metric: {metric!r}. Only 'val_loss' is supported."
+        )
+    return {
+        "enabled": enabled,
+        "patience": int(es_cfg.get("patience", 15)),
+        "min_delta": float(es_cfg.get("min_delta", 0.0001)),
+        "metric": metric,
+    }
+
+
+CHECKPOINT_IMPROVEMENT_EPS = 1e-12
+
+
+def checkpoint_val_loss_improved(val_loss: float, best_val_loss: float) -> bool:
+    """True when val_loss is strictly lower than the saved best (for best.pt)."""
+    return val_loss < best_val_loss - CHECKPOINT_IMPROVEMENT_EPS
+
+
+def early_stop_val_loss_improved(
+    val_loss: float,
+    early_stopping_best_metric: float,
+    min_delta: float,
+) -> bool:
+    """True when val_loss improves enough to reset early-stopping patience."""
+    return val_loss < early_stopping_best_metric - min_delta
+
+
+def restore_early_stopping_state(
+    payload: dict[str, Any],
+    best_val_loss: float,
+    *,
+    enabled: bool,
+) -> dict[str, Any]:
+    if not enabled:
+        return {"bad_epochs": 0, "best_metric": best_val_loss}
+
+    es_state = payload.get("early_stopping_state")
+    if es_state is None:
+        return {"bad_epochs": 0, "best_metric": best_val_loss}
+
+    return {
+        "bad_epochs": int(es_state.get("bad_epochs", 0)),
+        "best_metric": float(es_state.get("best_metric", best_val_loss)),
+    }
+
+
 def save_checkpoint(
     path: Path,
     epoch: int,
@@ -519,6 +656,8 @@ def save_checkpoint(
     best_val_loss: float,
     config: dict[str, Any],
     scaler: torch.amp.GradScaler | None = None,
+    early_stopping_state: dict[str, Any] | None = None,
+    scheduler: torch.optim.lr_scheduler.ReduceLROnPlateau | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {
@@ -530,6 +669,10 @@ def save_checkpoint(
     }
     if scaler is not None:
         payload["scaler_state_dict"] = scaler.state_dict()
+    if early_stopping_state is not None:
+        payload["early_stopping_state"] = early_stopping_state
+    if scheduler is not None:
+        payload["scheduler_state_dict"] = scheduler.state_dict()
     torch.save(payload, path)
 
 
@@ -646,7 +789,15 @@ def load_resume_checkpoint(
     config: dict[str, Any],
     device: torch.device,
     use_amp: bool,
-) -> tuple[nn.Module, torch.optim.Optimizer, torch.amp.GradScaler, int, float]:
+) -> tuple[
+    nn.Module,
+    torch.optim.Optimizer,
+    torch.amp.GradScaler,
+    int,
+    float,
+    dict[str, Any],
+    torch.optim.lr_scheduler.ReduceLROnPlateau | None,
+]:
     resume_path = resolve_path(resume_path)
     if not resume_path.is_file():
         raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
@@ -676,7 +827,23 @@ def load_resume_checkpoint(
 
     resume_epoch = int(payload["epoch"])
     best_val_loss = float(payload.get("best_val_loss", float("inf")))
-    return model, optimizer, scaler, resume_epoch, best_val_loss
+    early_stopping_cfg = early_stopping_config_from_training(config)
+    early_stopping_state = restore_early_stopping_state(
+        payload,
+        best_val_loss,
+        enabled=early_stopping_cfg["enabled"],
+    )
+
+    scheduler_cfg = scheduler_config_from_training(config)
+    scheduler = build_scheduler_from_config(optimizer, config)
+    restore_scheduler_state(
+        scheduler,
+        payload,
+        enabled=scheduler_cfg["enabled"],
+        resume_path=resume_path,
+    )
+
+    return model, optimizer, scaler, resume_epoch, best_val_loss, early_stopping_state, scheduler
 
 
 def validate_training_config(config: dict[str, Any]) -> None:
@@ -716,30 +883,54 @@ def train(
     epochs = int(train_cfg.get("epochs", 80))
     save_best = bool(train_cfg.get("save_best", True))
     save_last = bool(train_cfg.get("save_last", True))
+    early_stopping_cfg = early_stopping_config_from_training(config)
+    early_stopping_enabled = early_stopping_cfg["enabled"]
+    early_stopping_patience = early_stopping_cfg["patience"]
+    early_stopping_min_delta = early_stopping_cfg["min_delta"]
+    scheduler_cfg = scheduler_config_from_training(config)
+    scheduler_enabled = scheduler_cfg["enabled"]
 
     train_loader, val_loader = build_dataloaders(config)
     criterion = build_loss_from_config(config).to(device)
 
     resume_epoch = 0
     if resume_path is not None:
-        model, optimizer, scaler, resume_epoch, best_val_loss = load_resume_checkpoint(
+        (
+            model,
+            optimizer,
+            scaler,
+            resume_epoch,
+            best_val_loss,
+            early_stopping_state,
+            scheduler,
+        ) = load_resume_checkpoint(
             resume_path,
             config,
             device,
             use_amp,
         )
+        bad_epochs = int(early_stopping_state["bad_epochs"])
+        early_stopping_best_metric = float(early_stopping_state["best_metric"])
         start_epoch = resume_epoch + 1
         history = load_train_history(run_dir, resume_epoch)
         print(f"resume: {resolve_path(resume_path)}")
         print(f"resume_epoch: {resume_epoch}")
         print(f"start_epoch: {start_epoch}")
         print(f"restored best_val_loss: {best_val_loss:.6f}")
+        if early_stopping_enabled:
+            print(f"restored early_stopping bad_epochs: {bad_epochs}")
+            print(f"restored early_stopping best_metric: {early_stopping_best_metric:.6f}")
+        if scheduler_enabled:
+            print(f"restored lr: {current_learning_rates(optimizer)[0]:.6g}")
     else:
         model = build_model_from_config(config).to(device)
         optimizer = build_optimizer_from_config(model, config)
         scaler = _make_grad_scaler(device, use_amp)
+        scheduler = build_scheduler_from_config(optimizer, config)
         start_epoch = 1
         best_val_loss = float("inf")
+        bad_epochs = 0
+        early_stopping_best_metric = float("inf")
         history = []
 
     print(f"device: {device}")
@@ -747,14 +938,24 @@ def train(
     print(f"run_dir: {run_dir}")
     print(f"train samples: {len(train_loader.dataset)}")
     print(f"val samples: {len(val_loader.dataset)}")
+    if scheduler_enabled:
+        print(
+            f"scheduler: reduce_on_plateau "
+            f"(factor={scheduler_cfg['factor']}, patience={scheduler_cfg['patience']}, "
+            f"min_lr={scheduler_cfg['min_lr']})"
+        )
 
     training_skipped = start_epoch > epochs
+    early_stopped = False
+    stop_epoch: int | None = None
     if training_skipped:
         print(
             f"Resume checkpoint epoch {resume_epoch} >= target epochs {epochs}; skipping training."
         )
     else:
         for epoch in range(start_epoch, epochs + 1):
+            train_lrs = current_learning_rates(optimizer)
+            train_lr = train_lrs[0]
             train_metrics = train_one_epoch(
                 model,
                 train_loader,
@@ -780,19 +981,58 @@ def train(
             )
             val_loss_metrics = val_result["loss"]
             val_score_metrics = val_result["metrics"]
+            val_loss = val_loss_metrics["loss"]
+            checkpoint_improved = checkpoint_val_loss_improved(val_loss, best_val_loss)
+            early_stop_improved = (
+                early_stop_val_loss_improved(
+                    val_loss,
+                    early_stopping_best_metric,
+                    early_stopping_min_delta,
+                )
+                if early_stopping_enabled
+                else False
+            )
 
-            if val_loss_metrics["loss"] < best_val_loss:
-                best_val_loss = val_loss_metrics["loss"]
-                if save_best:
-                    save_checkpoint(
-                        run_dir / "best.pt",
-                        epoch,
-                        model,
-                        optimizer,
-                        best_val_loss,
-                        config,
-                        scaler,
-                    )
+            if checkpoint_improved:
+                best_val_loss = val_loss
+
+            if early_stopping_enabled:
+                if early_stop_improved:
+                    early_stopping_best_metric = val_loss
+                    bad_epochs = 0
+                else:
+                    bad_epochs += 1
+
+            scheduler_lr_changed = False
+            if scheduler is not None:
+                _, next_lrs, scheduler_lr_changed = step_scheduler(
+                    scheduler, optimizer, val_loss
+                )
+            else:
+                next_lrs = current_learning_rates(optimizer)
+            next_lr = next_lrs[0]
+
+            checkpoint_early_stopping_state = (
+                {
+                    "bad_epochs": bad_epochs,
+                    "best_metric": early_stopping_best_metric,
+                }
+                if early_stopping_enabled
+                else None
+            )
+
+            if save_best and checkpoint_improved:
+                save_checkpoint(
+                    run_dir / "best.pt",
+                    epoch,
+                    model,
+                    optimizer,
+                    best_val_loss,
+                    config,
+                    scaler,
+                    early_stopping_state=checkpoint_early_stopping_state,
+                    scheduler=scheduler,
+                )
 
             if save_last:
                 save_checkpoint(
@@ -803,6 +1043,8 @@ def train(
                     best_val_loss,
                     config,
                     scaler,
+                    early_stopping_state=checkpoint_early_stopping_state,
+                    scheduler=scheduler,
                 )
 
             metrics_val_path = run_dir / "metrics_val.json"
@@ -811,18 +1053,29 @@ def train(
                 encoding="utf-8",
             )
 
-            record = {
+            record: dict[str, Any] = {
                 "epoch": epoch,
+                "lr": train_lr,
+                "lrs": train_lrs,
+                "train_lr": train_lr,
+                "train_lrs": train_lrs,
+                "next_lr": next_lr,
+                "next_lrs": next_lrs,
                 "train": train_metrics,
                 "val": {
                     "loss": val_loss_metrics,
                     "metrics": metrics_to_json_serializable(val_score_metrics),
                 },
                 "best_val_loss": best_val_loss,
+                "checkpoint_improved": checkpoint_improved,
             }
+            if early_stopping_enabled:
+                record["early_stop_improved"] = early_stop_improved
+                record["early_stopping_bad_epochs"] = bad_epochs
             history.append(record)
 
             print(f"Epoch {epoch:03d}/{epochs:03d}")
+            print(f"  lr: {train_lr:.6g}")
             for line in _format_metrics("train", train_metrics):
                 print(line)
             for line in _format_metrics("val", val_loss_metrics):
@@ -830,6 +1083,31 @@ def train(
             for line in _format_val_score_metrics(val_score_metrics):
                 print(line)
             print(f"  best_val_loss: {best_val_loss:.6f}")
+            if checkpoint_improved:
+                print("  checkpoint: saved best.pt")
+            if early_stopping_enabled:
+                print(
+                    f"  early_stopping: bad_epochs={bad_epochs}/{early_stopping_patience}, "
+                    f"best_metric={early_stopping_best_metric:.6f}, "
+                    f"early_stop_improved={early_stop_improved}"
+                )
+
+            if early_stopping_enabled and bad_epochs >= early_stopping_patience:
+                early_stopped = True
+                stop_epoch = epoch
+                record["early_stopped"] = True
+                print(
+                    f"Early stopping triggered at epoch {epoch}: no val_loss improvement "
+                    f"greater than {early_stopping_min_delta} for {early_stopping_patience} epochs."
+                )
+                if scheduler_lr_changed:
+                    print(
+                        f"Learning rate changed: {train_lr:.6g} -> {next_lr:.6g}"
+                    )
+                break
+
+            if scheduler_lr_changed:
+                print(f"Learning rate changed: {train_lr:.6g} -> {next_lr:.6g}")
 
     if not training_skipped:
         history_path = run_dir / "train_history.json"
@@ -853,7 +1131,10 @@ def train(
         "best_val_loss": best_val_loss,
         "history": history,
         "training_skipped": training_skipped,
+        "early_stopped": early_stopped,
     }
+    if stop_epoch is not None:
+        result["stop_epoch"] = stop_epoch
     if test_results is not None:
         result["test"] = {
             split: metrics_to_json_serializable(metrics) for split, metrics in test_results.items()

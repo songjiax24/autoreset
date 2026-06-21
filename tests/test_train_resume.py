@@ -140,7 +140,7 @@ def test_load_resume_checkpoint_restores_optimizer_and_scaler(tmp_path: Path):
 
     payload = torch.load(run_dir / "last.pt", weights_only=False)
     device = torch.device("cpu")
-    model, optimizer, scaler, resume_epoch, best_val_loss = load_resume_checkpoint(
+    model, optimizer, scaler, resume_epoch, best_val_loss, _, _ = load_resume_checkpoint(
         run_dir / "last.pt",
         config,
         device,
